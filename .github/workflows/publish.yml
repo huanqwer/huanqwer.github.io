@@ -1,0 +1,74 @@
+name: Publish blog to huanqwer.github.io
+
+# 这个仓库只做"发布外壳"：拉取内容仓库 HarnessCraft → 构建 → 发布到 Pages。
+# 文章、配置、生成器的真源都在 HarnessCraft，这里不存第二份正文。
+on:
+  schedule:
+    # 定时刷新：默认最长 15 分钟延迟（不需要任何 secret）
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+  repository_dispatch:
+    # 配好 HarnessCraft 侧的 PAGES_DISPATCH_TOKEN 后，push 即发布
+    types: [content-updated]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: 拉取内容并构建
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取内容仓库 huanqwer/HarnessCraft（需要完整历史来推导文章日期）
+        uses: actions/checkout@v4
+        with:
+          repository: huanqwer/HarnessCraft
+          ref: main
+          fetch-depth: 0
+          path: content
+
+      - name: 准备 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: content/requirements.txt
+
+      - name: 安装依赖
+        run: pip install -r content/requirements.txt
+
+      - name: 生成站点源并做内容体检
+        working-directory: content
+        run: python tools/build_site.py --strict
+
+      - name: 构建站点
+        working-directory: content
+        run: mkdocs build --strict
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+
+      - name: 上传站点产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: content/site
+
+  deploy:
+    name: 发布
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
